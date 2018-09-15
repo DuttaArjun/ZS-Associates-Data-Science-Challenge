@@ -1,0 +1,671 @@
+---
+title: "Mekktronix Sales Forecast"
+author: "Arjun Dutta"
+date: "4/8/2018"
+output:
+  html_document:
+    code_folding: show
+    df_print: paged
+    highlight: textmate
+    source_code: embed
+    theme: united
+    toc: yes
+    toc_float: yes
+---
+
+### ZS Data Science Challenge - 2018
+
+It's a unique opportunity for me to solve a real data science problem statement! This had provided me a sneak peek into the actual work done at ZS Associates. The offered problem statement was designed to evaluate:   
+
+* How a competitor handles data to pre-process and generate relevant features and insights for Modeling.
+
+* Knowledge of Machine Learning/Statistics.
+
+* Proficiency in identifying the right technique to approach the solution.
+
+* Translating the findings from the business context point of view.
+
+### Importing the Packages
+
+Here I'll be importing all the Libraries.
+
+```{r, message=FALSE}
+
+#To read the Data
+library(data.table)
+
+#For Data Manipulation
+library(dplyr)
+
+```
+
+### Reading the Dataset
+
+#### Train Dataset
+```{r}
+
+#Read the Train Dataset
+Train <- fread("yds_train2018.csv")
+
+# print the top 6 row from the dataframe
+head(Train)
+```
+
+#### Promotinal Expense Dataset
+```{r}
+
+#Read the Promotional Expense Dataset
+PromoExp <- fread("promotional_expense.csv")
+
+# print the top 6 row from the dataframe
+head(PromoExp)
+
+```
+
+### Processing the Dataset
+
+The Train Dataset contains different countries and different products. We need to split the data according to each countries and their respective products and train model on each of those Datasets. In this case we have 11 datasets we need to build our model on.
+
+#### Processing the Train Dataset
+
+```{r}
+
+#Changing the Column name Product_Type to Product_ID in Promotional Expense Dataset
+colnames(PromoExp)[4] <- "Product_ID"
+
+#Function to Split the Data According to Country and Product
+Split <- function(country,product){
+  Train %>% select(S_No, Year, Month, Country, Product_ID, Sales) %>% filter(Country==country & Product_ID==product)
+}
+
+#Unique Countries and Product
+uniqCountry <-  unique(Train$Country)
+uniqProduct <-  sort(unique(Train$Product_ID))
+
+#Splitting the Data According to Country and Product into separate CSV files and Handling the values which are zero
+
+#Also Aggregating the Sales according to Monthly Basis
+
+for(country in uniqCountry){
+  for(product in uniqProduct){
+    Data <- data.frame()
+    Data <- Split(country,product)
+    Data$Sales[Data$Sales==0] <- NA 
+    Data <- na.omit(Data)
+    if(nrow(Data)!=0){
+      temp <- Data %>% group_by(Year, Month) %>% summarise(Sales=sum(Sales))
+      S_No <- c(1:nrow(temp))
+      Country <- rep(country, times = nrow(temp))
+      Product_ID <- rep(product,times = nrow(temp))
+      Data <- data.frame(S_No, Year=temp$Year,Month=temp$Month,Country,Product_ID,Monthly_Sales=temp$Sales)
+      write.csv(Data,file = paste("Data",country,product,sep = "_",".csv"),row.names = F)
+    }
+  }
+}
+```
+
+Similar is the case as above for the promotional expense dataset.
+
+#### Processing the Pormotional Expense Dataset
+
+```{r}
+#Function to Split the Data According to Country and Product
+SplitP <- function(country,product){
+  PromoExp %>% select(Year, Month, Country, Product_ID, Expense_Price) %>% filter(Country==country & Product_ID==product)
+}
+
+#Unique Countries and Product
+uniqCountry <-  unique(PromoExp$Country)
+uniqProduct <-  sort(unique(PromoExp$Product_ID))
+
+#Splitting the Promotinal Expense Data According to Country and Product into separate CSV files
+
+#Also Aggregating the Expense according to Monthly Basis
+
+for(country in uniqCountry){
+  for(product in uniqProduct){
+    Data <- data.frame()
+    Data <- SplitP(country,product)
+    if(nrow(Data)!=0){
+      temp <- Data %>% group_by(Year, Month) %>% summarise(Expense=sum(Expense_Price))
+      S_No <- c(1:nrow(temp))
+      Country <- rep(country, times = nrow(temp))
+      Product_ID <- rep(product,times = nrow(temp))
+      Data <- data.frame(S_No, Year=temp$Year,Month=temp$Month,Country,Product_ID,Monthly_Expense=temp$Expense)
+      write.csv(Data,file = paste("P",country,product,sep = "_",".csv"),row.names = F)
+    }
+  }
+}
+
+```
+
+### Fitting the Model
+
+```{r}
+#Loading libraries
+library(data.table)
+library(dplyr)
+library(forecast)
+library(tseries)
+library(TSPred)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Argentina and Product 1
+
+#Reading the data
+Data_A_1 <- fread("Data_Argentina_1_.csv")
+Data_A_1_PE <- fread("P_Argentina_1_.csv")
+
+Corrected <- Data_A_1$Monthly_Sales-Data_A_1_PE$Monthly_Expense[1:39]
+Corrected
+Data_A_1$Monthly_Sales <- Corrected
+
+#Transforming it into Time-Series Object
+T_A_1 <- ts(Data_A_1$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+
+#Forecasting for Country Argentina and Product 1
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_A_1), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_A_1))
+
+#Checking acf and pacf
+
+T_A_1 %>% diff %>% acf
+
+T_A_1 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit1 <- auto.arima(T_A_1)
+fit1
+
+#Checking the Accuracy
+accuracy(fit1)
+sMAPE(Data_A_1$Monthly_Sales,fit1$fitted)
+
+#Graphical and statistical test of the above model 
+fit1$residuals %>% qqnorm
+fit1$residuals %>% qqline
+fit1$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_A_1,stationary_test,T_A_1,Data_A_1_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Argentina and Product 2
+
+#Reading the data
+Data_A_2 <- fread("Data_Argentina_2_.csv")
+Data_A_2_PE <- fread("P_Argentina_2_.csv")
+
+Corrected <- Data_A_2$Monthly_Sales-Data_A_2_PE$Monthly_Expense[1:39]
+Corrected
+Data_A_2$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_A_2 <- ts(Data_A_2$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_A_2
+
+#Forecasting for Country Argentina and Product 2
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_A_2), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_A_2))
+
+#Checking acf and pacf
+
+T_A_2 %>% diff %>% acf
+
+T_A_2 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit2 <- auto.arima(T_A_2)
+accuracy(forecast(fit2))
+
+#Checking the Accuracy
+
+sMAPE(Data_A_2$Monthly_Sales,fit2$fitted)
+
+#Graphical and statistical test of the above model 
+fit2$residuals %>% qqnorm
+fit2$residuals %>% qqline
+fit2$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_A_2,stationary_test,T_A_2,Data_A_2_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Argentina and Product 3
+
+#Reading the data
+Data_A_3 <- fread("Data_Argentina_3_.csv")
+
+#Transforming it into Time-Series Object
+T_A_3 <- ts(Data_A_3$Monthly_Sales,start = c(2015, 1), frequency = 12)
+
+T_A_3
+
+#Forecasting for Country Argentina and Product 3
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_A_3), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_A_3))
+
+#Checking acf and pacf
+
+T_A_3 %>% diff %>% acf
+
+T_A_3 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit3 <- auto.arima(T_A_3)
+fit3
+
+#Checking the Accuracy
+accuracy(fit3)
+sMAPE(Data_A_3$Monthly_Sales,fit3$fitted)
+
+#Graphical and statistical test of the above model 
+fit3$residuals %>% qqnorm
+fit3$residuals %>% qqline
+fit3$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_A_3,stationary_test,T_A_3)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Belgium and Product 2
+
+#Reading the data
+Data_B_2 <- fread("Data_Belgium_2_.csv")
+Data_B_2_PE <- fread("P_Belgium_2_.csv")
+
+Corrected <- Data_B_2$Monthly_Sales-Data_B_2_PE$Monthly_Expense[1:39]
+Corrected
+Data_B_2$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_B_2 <- ts(Data_B_2$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_B_2
+
+#Forecasting for Country Belgium and Product 2
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_B_2), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_B_2))
+
+#Checking acf and pacf
+
+T_B_2 %>% diff %>% acf
+
+T_B_2 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit4 <- auto.arima(T_B_2,allowdrift = F)
+
+fit4
+
+#Checking the Accuracy
+accuracy(fit4)
+sMAPE(Data_B_2$Monthly_Sales,fit4$fitted)
+
+#Graphical and statistical test of the above model 
+fit4$residuals %>% qqnorm
+fit4$residuals %>% qqline
+fit4$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_B_2,stationary_test,T_B_2,Data_B_2_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Columbia and Product 1
+
+#Reading the data
+Data_C_1 <- fread("Data_Columbia_1_.csv")
+Data_C_1_PE <- fread("P_Columbia_1_.csv")
+
+Corrected <- Data_C_1$Monthly_Sales-Data_C_1_PE$Monthly_Expense[1:39]
+Corrected
+Data_C_1$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_C_1 <- ts(Data_C_1$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_C_1
+
+#Forecasting for Country Columbia and Product 1
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_C_1), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_C_1))
+
+#Checking acf and pacf
+
+T_C_1 %>% diff %>% acf
+
+T_C_1 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit5 <- auto.arima(T_C_1,allowdrift=F)
+fit5
+
+#Checking the Accuracy
+accuracy(fit5)
+sMAPE(Data_C_1$Monthly_Sales,fit5$fitted)
+
+#Graphical and statistical test of the above model 
+fit5$residuals %>% qqnorm
+fit5$residuals %>% qqline
+fit5$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_C_1,stationary_test,T_C_1,Data_C_1_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Columbia and Product 2
+
+#Reading the data
+Data_C_2 <- fread("Data_Columbia_2_.csv")
+Data_C_2_PE <- fread("P_Columbia_2_.csv")
+
+Corrected <- Data_C_2$Monthly_Sales-Data_C_2_PE$Monthly_Expense[1:39]
+Corrected
+Data_C_2$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_C_2 <- ts(Data_C_2$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_C_2
+
+#Forecasting for Country Belgium and Product 2
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_C_2), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_C_2))
+
+#Checking acf and pacf
+
+T_C_2 %>% diff %>% acf
+
+T_C_2 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit6 <- auto.arima(T_C_2,allowdrift = F)
+
+fit6
+
+#Checking the Accuracy
+accuracy(fit6)
+sMAPE(Data_C_2$Monthly_Sales,fit6$fitted)
+
+#Graphical and statistical test of the above model 
+fit6$residuals %>% qqnorm
+fit6$residuals %>% qqline
+fit6$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_C_2,stationary_test,T_C_2,Data_C_2_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Columbia and Product 3
+
+#Reading the data
+Data_C_3 <- fread("Data_Columbia_3_.csv")
+
+#Transforming it into Time-Series Object
+T_C_3 <- ts(Data_C_3$Monthly_Sales,start = c(2014, 9), frequency = 12)
+
+T_C_3
+
+#Forecasting for Country Columbia and Product 3
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_C_3), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_C_3))
+
+#Checking acf and pacf
+
+T_C_3 %>% diff %>% acf
+
+T_C_3 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit7 <- auto.arima(T_C_3)
+sMAPE(Data_C_3$Monthly_Sales,fit7$fitted)
+fit7
+
+#Checking the Accuracy
+accuracy(fit7)
+sMAPE(Data_C_3$Monthly_Sales,fit7$fitted)
+
+#Graphical and statistical test of the above model 
+fit7$residuals %>% qqnorm
+fit7$residuals %>% qqline
+fit7$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_C_3,stationary_test,T_C_3,Data_C_3_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Denmark and Product 2
+
+#Reading the data
+Data_D_2 <- fread("Data_Denmark_2_.csv")
+Data_D_2_PE <- fread("P_Denmark_2_.csv")
+
+Corrected <- Data_D_2$Monthly_Sales-Data_D_2_PE$Monthly_Expense[1:39]
+Corrected
+Data_D_2$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_D_2 <- ts(Data_D_2$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_D_2
+
+#Forecasting for Country Denmark and Product 2
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_D_2), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_D_2))
+
+#Checking acf and pacf
+
+T_D_2 %>% diff %>% acf
+
+T_D_2 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit8 <- auto.arima(T_D_2,allowdrift = F)
+sMAPE(Data_D_2$Monthly_Sales,fit8$fitted)
+fit8
+sMAPE(Data_D_2$Monthly_Sales,fit8$fitted)
+
+#Checking the Accuracy
+accuracy(fit8)
+
+#Graphical and statistical test of the above model 
+fit8$residuals %>% qqnorm
+fit8$residuals %>% qqline
+fit8$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_D_2,stationary_test,T_D_2,Data_D_2_PE,Corrected)
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country England and Product 4
+
+#Reading the data
+Data_E_4 <- fread("Data_England_4_.csv")
+Data_E_4_PE <- fread("P_England_4_.csv")
+
+Corrected <- Data_E_4$Monthly_Sales-Data_E_4_PE$Monthly_Expense[1:34]
+Corrected
+Data_E_4$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_E_4 <- ts(Data_E_4$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_E_4
+
+#Forecasting for Country England and Product 4
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_E_4), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_E_4))
+
+#Checking acf and pacf
+
+T_E_4 %>% diff %>% acf
+
+T_E_4 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit9 <- auto.arima(T_E_4)
+fit9
+
+#Checking the Accuracy
+accuracy(fit9)
+sMAPE(Data_E_4$Monthly_Sales,fit9$fitted)
+
+#Graphical and statistical test of the above model 
+fit9$residuals %>% qqnorm
+fit9$residuals %>% qqline
+fit9$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_E_4,stationary_test,T_E_4,Data_E_4_PE,Corrected)
+
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country England and Product 5
+
+#Reading the data
+Data_E_5 <- fread("Data_England_5_.csv")
+Data_E_5_PE <- fread("P_England_5_.csv")
+
+Corrected <- Data_E_5$Monthly_Sales-Data_E_5_PE$Monthly_Expense[1:34]
+Corrected
+Data_E_5$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_E_5 <- ts(Data_E_5$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_E_5
+
+#Forecasting for Country England and Product 5
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_E_5), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_E_5))
+
+#Checking acf and pacf
+
+T_E_5 %>% diff %>% acf
+
+T_E_5 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit10 <- auto.arima(T_E_5,allowdrift = F)
+fit10
+
+#Checking the Accuracy
+accuracy(fit10)
+sMAPE(Data_E_5$Monthly_Sales,fit10$fitted)
+
+#Graphical and statistical test of the above model 
+fit10$residuals %>% qqnorm
+fit10$residuals %>% qqline
+fit10$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_E_5,stationary_test,T_E_5,Data_E_5_PE,Corrected)
+#-------------------------------------------------------------------------------------------------------------------------------------
+
+#For Country Finland and Product 4
+
+#Reading the data
+Data_F_4 <- fread("Data_Finland_4_.csv")
+Data_F_4_PE <- fread("P_Finland_4_.csv")
+
+Corrected <- Data_F_4$Monthly_Sales-Data_F_4_PE$Monthly_Expense[1:34]
+Corrected
+Data_F_4$Monthly_Sales <- Corrected
+#Transforming it into Time-Series Object
+T_F_4 <- ts(Data_F_4$Monthly_Sales,start = c(2013, 1), frequency = 12)
+
+T_F_4
+
+#Forecasting for Country Finland and Product 4
+
+#Checking for Stationarity in the data
+stationary_test = adf.test(diff(T_F_4), alternative="stationary", k=0)
+print(stationary_test$p.value) ## less than 0.01 - meaning we have a stationary time series
+
+#Plotting the Graph
+plot(diff(T_F_4))
+
+#Checking acf and pacf
+
+T_F_4 %>% diff %>% acf
+
+T_F_4 %>% diff %>% pacf
+
+#Fitting Auto Arima
+fit11 <- auto.arima(T_F_4)
+sMAPE(Data_F_4$Monthly_Sales,fit11$fitted)
+fit11
+
+#Checking the Accuracy
+accuracy(fit11)
+sMAPE(Data_F_4$Monthly_Sales,fit11$fitted)
+#Graphical and statistical test of the above model 
+fit11$residuals %>% qqnorm
+fit11$residuals %>% qqline
+fit11$residuals %>% Box.test(type = "Ljung-Box") #Since p-value > 0.05 we accept null hypothesis and conclude that the fit is good
+rm(Data_F_4,stationary_test,T_F_4,Data_F_4_PE,Corrected)
+
+#Prediction
+P_A_1 <- predict(fit1 , n.ahead = 12)
+
+P_A_2 <- predict(fit2 , n.ahead = 12)
+
+P_A_3 <- predict(fit3 , n.ahead = 3)
+
+P_B_2 <- predict(fit4 , n.ahead = 12)
+
+P_C_1 <- predict(fit5 , n.ahead = 12)
+
+P_C_2 <- predict(fit6 , n.ahead = 12)
+
+P_C_3 <- predict(fit7 , n.ahead = 3)
+
+P_D_2 <- predict(fit8 , n.ahead = 12)
+
+P_E_4 <- predict(fit9 , n.ahead = 9)
+
+P_E_5 <- predict(fit10, n.ahead = 9)
+
+P_F_5 <- predict(fit11, n.ahead = 9)
+
+
+PredictedSales <- c(P_A_1$pred, P_A_2$pred, P_A_3$pred, P_B_2$pred, P_C_1$pred, P_C_2$pred, P_C_3$pred, P_D_2$pred, P_E_4$pred, P_E_5$pred, P_F_5$pred)
+
+#Saving the Prediction Values in test data (Evaluate Code)
+Test <- fread("yds_test2018.csv")
+Test$Sales <- PredictedSales
+write.csv(Test , file = "yds_submission2018.csv",row.names = F)
+```
